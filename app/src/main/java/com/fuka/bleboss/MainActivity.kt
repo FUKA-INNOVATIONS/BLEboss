@@ -2,8 +2,7 @@ package com.fuka.bleboss
 
 import android.Manifest
 import android.app.Activity
-import android.bluetooth.BluetoothAdapter
-import android.bluetooth.BluetoothManager
+import android.bluetooth.*
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
@@ -19,13 +18,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.Button
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.Surface
 import androidx.compose.material.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
@@ -33,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.fuka.bleboss.ui.theme.BLEbossTheme
+import java.util.UUID
 
 // Bluetooth-enabling action we’ll soon request from the user. It can be any positive integer value
 private const val ENABLE_BLUETOOTH_REQUEST_CODE = 1
@@ -61,12 +61,53 @@ class MainActivity : ComponentActivity() {
         .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
         .build()
 
+    private val scanResults = mutableListOf<ScanResult>() // List of devices found
+
     // create an object that implements the functions in ScanCallback so that we’ll be notified when a scan result is available
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
-            Log.d(TAG, "onScanResult: ")
-            with(result.device) {
-                Log.i(TAG, "Found BLE device! Name: ${name ?: "Unnamed"}, address: $address")
+
+            val indexQuery = scanResults.indexOfFirst { it.device.address == result.device.address }
+            if (indexQuery != -1) { // A scan result already exists with the same address
+                scanResults[indexQuery] = result
+            } else {
+                with(result.device) {
+                    Log.i(TAG, "Found BLE device! Name: ${name ?: "Unnamed"}, address: $address")
+
+                }
+                Log.i(TAG, "Service UUID count: ${result.device.uuids?.size ?: "no UUIDs"}")
+                result.device.uuids?.let {
+                    it.forEach { UUID -> Log.d(TAG, "Service UUID: ${UUID}") }
+                }
+                scanResults.add(result)
+            }
+
+            //Log.d(TAG, "onScanResult: list size: ${scanResults.size}")
+        }
+
+        override fun onScanFailed(errorCode: Int) {
+            Log.e(TAG, "onScanFailed: code $errorCode")
+        }
+
+    }
+
+    private val gattCallback = object : BluetoothGattCallback() {
+        override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+            val deviceAddress = gatt.device.address
+
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                if (newState == BluetoothProfile.STATE_CONNECTED) {
+                    Log.w("BluetoothGattCallback", "Successfully connected to $deviceAddress")
+                    // BluetoothGatt is the gateway to other BLE operations such as service discovery,
+                    // reading and writing data, and even performing a connection teardown.
+                    // TODO: Store a reference to BluetoothGatt
+                } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                    Log.w("BluetoothGattCallback", "Successfully disconnected from $deviceAddress")
+                    gatt.close()
+                }
+            } else {
+                Log.w("BluetoothGattCallback", "Error $status encountered for $deviceAddress! Disconnecting...")
+                gatt.close()
             }
         }
     }
@@ -75,6 +116,15 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
+
+            var isScanning by rememberSaveable { mutableStateOf(false) }
+            var list by rememberSaveable { mutableStateOf(scanResults) }
+
+            //val setList: () -> Unit = { list = scanResults }
+
+            val onStartScanning: () -> Unit = { isScanning = true }
+            val onStopScanning: () -> Unit = { isScanning = false }
+            //val onSetScanResult: (scanResultList: MutableList<ScanResult>) -> Unit = { scanResultList -> scanResult = scanResultList. }
             BLEbossTheme {
                 Surface(
                     modifier = Modifier
@@ -84,34 +134,55 @@ class MainActivity : ComponentActivity() {
                 ) {
                     Column {
                         Button(
-                            enabled = true,
-                            onClick = { startBleScan() },
+                            enabled = !isScanning,
+                            onClick = { startBleScan(onStart = onStartScanning) },
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(text = "START BLE scan")
                         }
 
                         Button(
-                            enabled = true,
-                            onClick = { stopBleScan() },
+                            enabled = isScanning,
+                            onClick = { stopBleScan(onStop = onStopScanning) },
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(text = "STOP BLE scan")
                         }
+
+                        Button(
+                            enabled = !isScanning,
+                            onClick = { Log.d(TAG, "size: ${list.size}") },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(text = "Display list of devices")
+                        }
+
+                        LazyColumn {
+                            items(
+                                //items = listOf("Eka", "Toka", "Kolmas", "Neljäs")
+                                items = list
+                            ) { item ->
+                                Text(text = item.device.address)
+                            }
+                        }
+
                     }
                 }
             }
         }
     }
 
-    private fun startBleScan() {
+    private fun startBleScan(onStart: () -> Unit) {
         Log.d(TAG, "startBleScan: no BLE runtime permission ")
         // TODO: Check runtime permissions
+        scanResults.clear()
         bleScanner.startScan(null, scanSettings, scanCallback)
+        onStart()
     }
 
-    private fun stopBleScan() {
+    private fun stopBleScan(onStop: () -> Unit) {
         bleScanner.stopScan(scanCallback)
+        onStop()
     }
 
 
