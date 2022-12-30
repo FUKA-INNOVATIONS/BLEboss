@@ -1,58 +1,119 @@
 package com.fuka.bleboss
 
 import android.Manifest
+import android.app.Activity
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
+import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.Button
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.Surface
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.fuka.bleboss.ui.theme.BLEbossTheme
 
 // Bluetooth-enabling action we’ll soon request from the user. It can be any positive integer value
 private const val ENABLE_BLUETOOTH_REQUEST_CODE = 1
 private const val RUNTIME_PERMISSION_REQUEST_CODE = 2
+private const val TAG = "BLEBossss"
 
 class MainActivity : ComponentActivity() {
 
+    /*
+    * By deferring the initialization of bluetoothAdapter and also bleScanner to when we actually need them,
+    * we avoid a crash that would happen if bluetoothAdapter was initialized before onCreate() has returned.*/
+
+    private val bleScanner by lazy {
+        bluetoothAdapter.bluetoothLeScanner
+    }
+
+    // getSystemService() function is only available after onCreate() has already been called for our Activity
     private val bluetoothAdapter: BluetoothAdapter by lazy {
         val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         bluetoothManager.adapter
     }
 
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        setContent {
-            BLEbossTheme {
-                // A surface container using the 'background' color from the theme
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colors.background
-                ) {
-                    Greeting("Android")
-                }
+
+    // You can tweak your own scan settings
+    private val scanSettings = ScanSettings.Builder()
+        .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+        .build()
+
+    // create an object that implements the functions in ScanCallback so that we’ll be notified when a scan result is available
+    private val scanCallback = object : ScanCallback() {
+        override fun onScanResult(callbackType: Int, result: ScanResult) {
+            Log.d(TAG, "onScanResult: ")
+            with(result.device) {
+                Log.i(TAG, "Found BLE device! Name: ${name ?: "Unnamed"}, address: $address")
             }
         }
     }
 
 
-    override fun onResume() {
-        super.onResume()
-        if (!bluetoothAdapter.isEnabled) {
-            promptEnableBluetooth()
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent {
+            BLEbossTheme {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(5.dp),
+                    color = MaterialTheme.colors.background
+                ) {
+                    Column {
+                        Button(
+                            enabled = true,
+                            onClick = { startBleScan() },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(text = "START BLE scan")
+                        }
+
+                        Button(
+                            enabled = true,
+                            onClick = { stopBleScan() },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(text = "STOP BLE scan")
+                        }
+                    }
+                }
+            }
         }
     }
+
+    private fun startBleScan() {
+        Log.d(TAG, "startBleScan: no BLE runtime permission ")
+        // TODO: Check runtime permissions
+        bleScanner.startScan(null, scanSettings, scanCallback)
+    }
+
+    private fun stopBleScan() {
+        bleScanner.stopScan(scanCallback)
+    }
+
 
     private fun promptEnableBluetooth() {
         if (!bluetoothAdapter.isEnabled) {
@@ -60,7 +121,6 @@ class MainActivity : ComponentActivity() {
             startActivityForResult(enableBtIntent, ENABLE_BLUETOOTH_REQUEST_CODE)
         }
     }
-
 
 
     /*
@@ -73,7 +133,10 @@ class MainActivity : ComponentActivity() {
     // Request runtime permission from the user: in your Activity, ViewModel, or at least in a Context
 
     fun Context.hasPermission(permissionType: String): Boolean {
-        return ContextCompat.checkSelfPermission(this, permissionType) == PackageManager.PERMISSION_GRANTED
+        return ContextCompat.checkSelfPermission(
+            this,
+            permissionType
+        ) == PackageManager.PERMISSION_GRANTED
     }
 
     fun Context.hasRequiredRuntimePermissions(): Boolean {
@@ -85,18 +148,100 @@ class MainActivity : ComponentActivity() {
     }
 
 
-
-}
-
-@Composable
-fun Greeting(name: String) {
-    Text(text = "Hello $name!")
-}
-
-@Preview(showBackground = true)
-@Composable
-fun DefaultPreview() {
-    BLEbossTheme {
-        Greeting("Android")
+    /* override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        when (requestCode) {
+            RUNTIME_PERMISSION_REQUEST_CODE -> {
+                val containsPermanentDenial = permissions.zip(grantResults.toTypedArray()).any {
+                    it.second == PackageManager.PERMISSION_DENIED &&
+                            !ActivityCompat.shouldShowRequestPermissionRationale(this, it.first)
+                }
+                val containsDenial = grantResults.any { it == PackageManager.PERMISSION_DENIED }
+                val allGranted = grantResults.all { it == PackageManager.PERMISSION_GRANTED }
+                when {
+                    containsPermanentDenial -> {
+                        // TODO: Handle permanent denial (e.g., show AlertDialog with justification)
+                        // Note: The user will need to navigate to App Settings and manually grant
+                        // permissions that were permanently denied
+                    }
+                    containsDenial -> {
+                        requestRelevantRuntimePermissions()
+                    }
+                    allGranted && hasRequiredRuntimePermissions() -> {
+                        startBleScan()
+                    }
+                    else -> {
+                        // Unexpected scenario encountered when handling permissions
+                        recreate()
+                    }
+                }
+            }
+        }
     }
+
+    private fun Activity.requestRelevantRuntimePermissions() {
+        if (hasRequiredRuntimePermissions()) { return }
+        when {
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.S -> {
+                requestLocationPermission()
+            }
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+                requestBluetoothPermissions()
+            }
+        }
+    }
+
+
+    private fun requestLocationPermission() {
+        runOnUiThread {
+            alert {
+                title = "Location permission required"
+                message = "Starting from Android M (6.0), the system requires apps to be granted " +
+                        "location access in order to scan for BLE devices."
+                isCancelable = false
+                positiveButton(android.R.string.ok) {
+                    ActivityCompat.requestPermissions(
+                        this,
+                        arrayOf(Manifest.permission.ACCESS_FINE_LOCATION),
+                        RUNTIME_PERMISSION_REQUEST_CODE
+                    )
+                }
+            }.show()
+        }
+    }
+
+    private fun requestBluetoothPermissions() {
+        runOnUiThread {
+            alert {
+                title = "Bluetooth permissions required"
+                message = "Starting from Android 12, the system requires apps to be granted " +
+                        "Bluetooth access in order to scan for and connect to BLE devices."
+                isCancelable = false
+                positiveButton(android.R.string.ok) {
+                    ActivityCompat.requestPermissions(
+                        this,
+                        arrayOf(
+                            Manifest.permission.BLUETOOTH_SCAN,
+                            Manifest.permission.BLUETOOTH_CONNECT
+                        ),
+                        RUNTIME_PERMISSION_REQUEST_CODE
+                    )
+                }
+            }.show()
+        }
+    }*/
+
+
+    override fun onResume() {
+        super.onResume()
+        if (!bluetoothAdapter.isEnabled) {
+            promptEnableBluetooth()
+        }
+    }
+
+
 }
