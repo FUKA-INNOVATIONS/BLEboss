@@ -14,10 +14,9 @@ import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.Button
@@ -27,6 +26,8 @@ import androidx.compose.material.Text
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
@@ -97,16 +98,16 @@ class MainActivity : ComponentActivity() {
 
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
-                    Log.w("BluetoothGattCallback", "Successfully connected to $deviceAddress")
+                    Log.w(TAG, "Successfully connected to $deviceAddress")
                     // BluetoothGatt is the gateway to other BLE operations such as service discovery,
                     // reading and writing data, and even performing a connection teardown.
                     // TODO: Store a reference to BluetoothGatt
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                    Log.w("BluetoothGattCallback", "Successfully disconnected from $deviceAddress")
+                    Log.w(TAG, "Successfully disconnected from $deviceAddress")
                     gatt.close()
                 }
             } else {
-                Log.w("BluetoothGattCallback", "Error $status encountered for $deviceAddress! Disconnecting...")
+                Log.w(TAG, "Error $status encountered for $deviceAddress! Disconnecting...")
                 gatt.close()
             }
         }
@@ -125,6 +126,9 @@ class MainActivity : ComponentActivity() {
             val onStartScanning: () -> Unit = { isScanning = true }
             val onStopScanning: () -> Unit = { isScanning = false }
             //val onSetScanResult: (scanResultList: MutableList<ScanResult>) -> Unit = { scanResultList -> scanResult = scanResultList. }
+
+            val context = LocalContext.current
+
             BLEbossTheme {
                 Surface(
                     modifier = Modifier
@@ -160,9 +164,19 @@ class MainActivity : ComponentActivity() {
                         LazyColumn {
                             items(
                                 //items = listOf("Eka", "Toka", "Kolmas", "Neljäs")
-                                items = list
+                                items = scanResults
                             ) { item ->
-                                Text(text = item.device.address)
+                                Row(modifier = Modifier
+                                    .clickable { item.device.connectGatt(context, false, gattCallback) }
+                                    .height(65.dp)
+                                    //.background(Color.DarkGray)
+                                    //.padding(vertical = 20.dp)
+                                    .fillMaxWidth()
+                                    ) {
+                                    Text(text = item.device.name ?: "Unnamed")
+                                    Spacer(modifier = Modifier.padding(horizontal = 5.dp))
+                                    Text(text = item.device.address)
+                                }
                             }
                         }
 
