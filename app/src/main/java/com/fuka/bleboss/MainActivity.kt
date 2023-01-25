@@ -11,6 +11,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -76,10 +78,11 @@ class MainActivity : ComponentActivity() {
                     Log.i(TAG, "Found BLE device! Name: ${name ?: "Unnamed"}, address: $address")
 
                 }
+                Log.d(TAG, "onScanResult RSSI: ${result.rssi}")
                 Log.i(TAG, "Service UUID count: ${result.device.uuids?.size ?: "no UUIDs"}")
-                result.device.uuids?.let {
+                /*result.device.uuids?.let {
                     it.forEach { UUID -> Log.d(TAG, "Service UUID: ${UUID}") }
-                }
+                }*/
                 scanResults.add(result)
             }
 
@@ -92,6 +95,8 @@ class MainActivity : ComponentActivity() {
 
     }
 
+
+
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             val deviceAddress = gatt.device.address
@@ -99,11 +104,31 @@ class MainActivity : ComponentActivity() {
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
                     Log.w(TAG, "Successfully connected to $deviceAddress")
+
+                    //gatt.discoverServices()
+
+
+                    // Note that service discovery is being performed on the main thread!
+                    val bluetoothGatt = gatt
+                    Handler(Looper.getMainLooper()).post {
+                        if (ActivityCompat.checkSelfPermission(
+                                applicationContext,
+                                Manifest.permission.BLUETOOTH_CONNECT
+                            ) != PackageManager.PERMISSION_GRANTED
+                        )
+                        bluetoothGatt?.discoverServices()
+                    }
+
                     // BluetoothGatt is the gateway to other BLE operations such as service discovery,
                     // reading and writing data, and even performing a connection teardown.
                     // TODO: Store a reference to BluetoothGatt
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                     Log.w(TAG, "Successfully disconnected from $deviceAddress")
+                    if (ActivityCompat.checkSelfPermission(
+                            applicationContext,
+                            Manifest.permission.BLUETOOTH_CONNECT
+                        ) != PackageManager.PERMISSION_GRANTED
+                    )
                     gatt.close()
                 }
             } else {
@@ -111,7 +136,41 @@ class MainActivity : ComponentActivity() {
                 gatt.close()
             }
         }
+
+        override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+            with(gatt) {
+                Log.w(TAG, "Discovered ${services.size} services for ${device.address}")
+                printGattTable() // See implementation just above this section
+                // Consider connection setup as complete here
+            }
+        }
+
+
+        /*override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
+            super.onServicesDiscovered(gatt, status)
+            gatt?.printGattTable()
+        }*/
+
+
     }
+
+    // extension function that prints out all the UUIDs of available services and characteristics that the BluetoothGatt of a BLE device has to offer
+    private fun BluetoothGatt.printGattTable() {
+        if (services.isEmpty()) {
+            Log.i(TAG, "No service and characteristic available, call discoverServices() first?")
+            return
+        }
+        services.forEach { service ->
+            val characteristicsTable = service.characteristics.joinToString(
+                separator = "\n|--",
+                prefix = "|--"
+            ) { it.uuid.toString() }
+            Log.i(TAG, "\nService ${service.uuid}\nCharacteristics:\n$characteristicsTable"
+            )
+        }
+    }
+
+
 
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -164,18 +223,33 @@ class MainActivity : ComponentActivity() {
                         LazyColumn {
                             items(
                                 //items = listOf("Eka", "Toka", "Kolmas", "Neljäs")
-                                items = scanResults
+                                items = list
                             ) { item ->
-                                Row(modifier = Modifier
-                                    .clickable { item.device.connectGatt(context, false, gattCallback) }
-                                    .height(65.dp)
-                                    //.background(Color.DarkGray)
-                                    //.padding(vertical = 20.dp)
-                                    .fillMaxWidth()
+                                if (ActivityCompat.checkSelfPermission(
+                                        LocalContext.current,
+                                        Manifest.permission.BLUETOOTH_CONNECT
+                                    ) != PackageManager.PERMISSION_GRANTED
+                                )
+                                item.device.name?.let {
+                                    Row(modifier = Modifier
+                                        .clickable {
+                                            item.device.connectGatt(
+                                                context,
+                                                false,
+                                                gattCallback
+                                            )
+                                        }
+                                        .height(65.dp)
+                                        //.background(Color.DarkGray)
+                                        //.padding(vertical = 20.dp)
+                                        .fillMaxWidth()
                                     ) {
-                                    Text(text = item.device.name ?: "Unnamed")
-                                    Spacer(modifier = Modifier.padding(horizontal = 5.dp))
-                                    Text(text = item.device.address)
+                                        Text(text = item.device.name ?: "Unnamed")
+                                        Spacer(modifier = Modifier.padding(horizontal = 5.dp))
+                                        Text(text = item.device.address)
+                                        Spacer(modifier = Modifier.padding(horizontal = 5.dp))
+                                        Text(text = item.rssi.toString())
+                                    }
                                 }
                             }
                         }
@@ -190,11 +264,21 @@ class MainActivity : ComponentActivity() {
         Log.d(TAG, "startBleScan: no BLE runtime permission ")
         // TODO: Check runtime permissions
         scanResults.clear()
+        if (ActivityCompat.checkSelfPermission(
+                this,
+                Manifest.permission.BLUETOOTH_SCAN
+            ) != PackageManager.PERMISSION_GRANTED
+        )
         bleScanner.startScan(null, scanSettings, scanCallback)
         onStart()
     }
 
     private fun stopBleScan(onStop: () -> Unit) {
+        if (ActivityCompat.checkSelfPermission(
+                this,
+                Manifest.permission.BLUETOOTH_SCAN
+            ) != PackageManager.PERMISSION_GRANTED
+        )
         bleScanner.stopScan(scanCallback)
         onStop()
     }
@@ -203,6 +287,11 @@ class MainActivity : ComponentActivity() {
     private fun promptEnableBluetooth() {
         if (!bluetoothAdapter.isEnabled) {
             val enableBtIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
+            if (ActivityCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.BLUETOOTH_CONNECT
+                ) != PackageManager.PERMISSION_GRANTED
+            )
             startActivityForResult(enableBtIntent, ENABLE_BLUETOOTH_REQUEST_CODE)
         }
     }
